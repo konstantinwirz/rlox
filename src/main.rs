@@ -1,5 +1,5 @@
 use clap::{Parser, ValueEnum};
-use rlox::{Lexer, Parser as LoxParser};
+use rlox::{Interpreter, Lexer, Parser as LoxParser};
 
 #[derive(ValueEnum, Debug, Clone, Copy)]
 enum Command {
@@ -43,6 +43,14 @@ fn main() -> std::result::Result<(), std::boxed::Box<dyn std::error::Error>> {
                     Ok(expr) => println!("{expr}"),
                     Err(err) => eprint!("{err}"),
                 }
+            }
+        }
+        Command::Eval => {
+            let mut interpreter = Interpreter::new(&file_content);
+            let result = interpreter.eval();
+            match result {
+                Ok(value) => Interpreter::print(&value),
+                Err(err) => eprintln!("{err}"),
             }
         }
         _ => todo!(),

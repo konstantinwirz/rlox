@@ -15,3 +15,6 @@ pub use crate::expr::Expr;
 
 pub mod loxvalue;
 pub use crate::loxvalue::LoxValue;
+
+pub mod interpreter;
+pub use crate::interpreter::Interpreter;

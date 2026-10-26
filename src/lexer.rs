@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use crate::{LoxError, LoxValue, Token, TokenKind};
 
 pub struct Lexer<'s> {
@@ -122,7 +124,7 @@ impl<'s> Lexer<'s> {
                 return Ok(Token {
                     kind: TokenKind::String,
                     lexeme,
-                    literal: LoxValue::String(literal),
+                    literal: LoxValue::String(Cow::from(literal)),
                     line: self.line,
                 });
             }

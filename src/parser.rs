@@ -1,8 +1,8 @@
 use std::iter::Peekable;
 
-use crate::{Expr, Lexer, LoxError, LoxValue, Token, TokenKind};
+use crate::{Expr, Lexer, LoxError, LoxValue, Stmt, Token, TokenKind, loxerror::SourceLocation};
 
-pub type ParseResult<'a> = Result<Expr<'a>, LoxError>;
+pub type ParseResult<'a> = Result<Option<Stmt<'a>>, LoxError>;
 
 pub struct Parser<'p> {
     lexer: Peekable<Lexer<'p>>,
@@ -28,22 +28,112 @@ impl<'p> Parser<'p> {
     }
 
     fn parse(&mut self) -> ParseResult<'p> {
-        self.parse_expr()
+        if self.is_at_end() {
+            return Ok(None);
+        }
+
+        match self.parse_decl() {
+            Ok(stmt) => Ok(Some(stmt)),
+            Err(err) => {
+                _ = self.sync();
+                Err(err)
+            }
+        }
     }
 
-    fn parse_equality(&mut self) -> ParseResult<'p> {
-        let mut expr = self.parse_comparison()?;
+    fn parse_decl(&mut self) -> Result<Stmt<'p>, LoxError> {
+        if self.matches(&[TokenKind::Var])?.is_some() {
+            return self.parse_var_decl();
+        }
 
-        while let Some(op) = self.matches(&[TokenKind::BangEqual, TokenKind::EqualEqual])? {
-            let right_expr = self.parse_comparison()?;
-            expr = Expr::Binary(Box::new(expr), op, Box::new(right_expr));
+        self.parse_stmt()
+    }
+
+    fn parse_stmt(&mut self) -> Result<Stmt<'p>, LoxError> {
+        if self.matches(&[TokenKind::Print])?.is_some() {
+            return self.parse_print_stmt();
+        }
+
+        if self.matches(&[TokenKind::LeftBrace])?.is_some() {
+            return self.parse_block();
+        }
+
+        self.parse_expr_stmt()
+    }
+
+    fn parse_block(&mut self) -> Result<Stmt<'p>, LoxError> {
+        let mut stmts: Vec<Stmt<'p>> = Vec::new();
+
+        while !self.is_at_end() && self.check(&TokenKind::RightBrace)?.is_none() {
+            stmts.push(self.parse_decl()?);
+        }
+
+        _ = self.consume(&TokenKind::RightBrace, "Expect '}' after block.")?;
+        Ok(Stmt::Block(stmts))
+    }
+
+    pub fn parse_expr(&mut self) -> Result<Expr<'p>, LoxError> {
+        self.parse_assignment()
+    }
+
+    fn parse_assignment(&mut self) -> Result<Expr<'p>, LoxError> {
+        let expr = self.parse_equality_expr()?;
+
+        if let Some(equals) = self.matches(&[TokenKind::Equal])? {
+            let value = self.parse_assignment()?;
+            return match expr {
+                Expr::Var(name) => Ok(Expr::Assign(name, Box::new(value))),
+                _ => Err(LoxError::new_parse_error(
+                    "Invalid assignment target.",
+                    SourceLocation::Token(&equals),
+                )),
+            };
         }
 
         Ok(expr)
     }
 
-    fn parse_comparison(&mut self) -> ParseResult<'p> {
-        let mut expr = self.parse_term()?;
+    fn parse_var_decl(&mut self) -> Result<Stmt<'p>, LoxError> {
+        let name: Token<'_> = self.consume(&TokenKind::Identifier, "Expect variable name.")?;
+        let initializer = if self.matches(&[TokenKind::Equal])?.is_some() {
+            Some(self.parse_expr()?)
+        } else {
+            None
+        };
+
+        self.consume(
+            &TokenKind::Semicolon,
+            "Expect ';' after variable declaration.",
+        )?;
+
+        Ok(Stmt::Var { name, initializer })
+    }
+
+    fn parse_expr_stmt(&mut self) -> Result<Stmt<'p>, LoxError> {
+        let expr = self.parse_expr()?;
+        _ = self.consume(&TokenKind::Semicolon, "Expect ';' after expression.")?;
+        Ok(Stmt::Expr(expr))
+    }
+
+    fn parse_print_stmt(&mut self) -> Result<Stmt<'p>, LoxError> {
+        let expr = self.parse_expr()?;
+        _ = self.consume(&TokenKind::Semicolon, "Expect ';' after value.")?;
+        Ok(Stmt::Print(expr))
+    }
+
+    fn parse_equality_expr(&mut self) -> Result<Expr<'p>, LoxError> {
+        let mut expr = self.parse_comparison_expr()?;
+
+        while let Some(op) = self.matches(&[TokenKind::BangEqual, TokenKind::EqualEqual])? {
+            let right = self.parse_comparison_expr()?;
+            expr = Expr::Binary(Box::new(expr), op, Box::new(right));
+        }
+
+        Ok(expr)
+    }
+
+    fn parse_comparison_expr(&mut self) -> Result<Expr<'p>, LoxError> {
+        let mut expr = self.parse_term_expr()?;
 
         while let Some(op) = self.matches(&[
             TokenKind::Greater,
@@ -51,46 +141,46 @@ impl<'p> Parser<'p> {
             TokenKind::Less,
             TokenKind::LessEqual,
         ])? {
-            let right_expr = self.parse_term()?;
+            let right_expr = self.parse_term_expr()?;
             expr = Expr::Binary(Box::new(expr), op, Box::new(right_expr));
         }
 
         Ok(expr)
     }
 
-    fn parse_term(&mut self) -> ParseResult<'p> {
-        let mut expr = self.parse_factor()?;
+    fn parse_term_expr(&mut self) -> Result<Expr<'p>, LoxError> {
+        let mut expr = self.parse_factor_expr()?;
 
         while let Some(op) = self.matches(&[TokenKind::Minus, TokenKind::Plus])? {
-            let right_expr = self.parse_factor()?;
+            let right_expr = self.parse_factor_expr()?;
             expr = Expr::Binary(Box::new(expr), op, Box::new(right_expr))
         }
 
         Ok(expr)
     }
 
-    fn parse_factor(&mut self) -> ParseResult<'p> {
-        let mut expr = self.parse_unary()?;
+    fn parse_factor_expr(&mut self) -> Result<Expr<'p>, LoxError> {
+        let mut expr = self.parse_unary_expr()?;
 
         while let Some(op) = self.matches(&[TokenKind::Slash, TokenKind::Star])? {
-            let right_expr = self.parse_unary()?;
+            let right_expr = self.parse_unary_expr()?;
             expr = Expr::Binary(Box::new(expr), op, Box::new(right_expr));
         }
 
         Ok(expr)
     }
 
-    fn parse_unary(&mut self) -> ParseResult<'p> {
+    fn parse_unary_expr(&mut self) -> Result<Expr<'p>, LoxError> {
         match self.matches(&[TokenKind::Bang, TokenKind::Minus])? {
             Some(op) => {
-                let right_expr = self.parse_unary()?;
+                let right_expr = self.parse_unary_expr()?;
                 Ok(Expr::Unary(op, Box::new(right_expr)))
             }
-            None => self.parse_primary(),
+            None => self.parse_primary_expr(),
         }
     }
 
-    fn parse_primary(&mut self) -> ParseResult<'p> {
+    fn parse_primary_expr(&mut self) -> Result<Expr<'p>, LoxError> {
         if self.matches(&[TokenKind::False])?.is_some() {
             return Ok(Expr::Literal(LoxValue::Boolean(false)));
         }
@@ -107,6 +197,10 @@ impl<'p> Parser<'p> {
             return Ok(Expr::Literal(token.literal));
         }
 
+        if let Some(token) = self.matches(&[TokenKind::Identifier])? {
+            return Ok(Expr::Var(token));
+        }
+
         if self.matches(&[TokenKind::LeftParen])?.is_some() {
             let expr = Box::new(self.parse_expr()?);
             self.consume(&TokenKind::RightParen, "Expect ')' after expression.")?;
@@ -114,36 +208,33 @@ impl<'p> Parser<'p> {
         }
 
         Err(LoxError::new_parse_error(
-            "Expect expression",
-            self.peek()?.map_or_default(|t| t.line),
+            "Expect expression.",
+            SourceLocation::Token(
+                self.peek()?
+                    .expect("token must exist, we are not at end yet"),
+            ),
         ))
     }
 
-    fn parse_expr(&mut self) -> ParseResult<'p> {
-        self.parse_equality().map_err(|err| {
-            _ = self.sync();
-            err
-        })
-    }
-
-    fn consume(&mut self, token_kind: &TokenKind, msg: &str) -> Result<(), LoxError> {
+    fn consume(&mut self, token_kind: &TokenKind, error_msg: &str) -> Result<Token<'p>, LoxError> {
         if let Some(token) = self.peek()? {
             if token.kind == *token_kind {
-                assert!(self.advance().is_ok());
-                return Ok(());
+                return Ok(self.advance()?);
             }
 
             // unexpected
-            return Err(LoxError::new_parse_error(msg, token.line));
+            return Err(LoxError::new_parse_error(
+                error_msg,
+                SourceLocation::Token(token),
+            ));
         }
 
-        panic!("no more tokens");
+        panic!("no more tokens, first check if we are at end")
     }
 
     fn sync(&mut self) -> Result<(), LoxError> {
-        let token = self.advance()?;
-
         while !self.is_at_end() {
+            let token = self.advance()?;
             if token.kind == TokenKind::Semicolon {
                 return Ok(());
             }
@@ -163,8 +254,6 @@ impl<'p> Parser<'p> {
                     return Ok(());
                 }
             }
-
-            assert!(self.advance().is_ok());
         }
 
         Ok(())

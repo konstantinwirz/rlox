@@ -8,6 +8,8 @@ pub enum Expr<'a> {
     Unary(Token<'a>, Box<Expr<'a>>),
     Literal(LoxValue<'a>),
     Group(Box<Expr<'a>>),
+    Var(/* name */ Token<'a>),
+    Assign(/* name */ Token<'a>, /* value */ Box<Expr<'a>>),
 }
 
 impl Display for Expr<'_> {
@@ -19,6 +21,8 @@ impl Display for Expr<'_> {
             &Expr::Binary(ref left, ref op, ref right) => {
                 write!(f, "({} {} {})", op.lexeme, left, right)
             }
+            &Expr::Var(ref name) => write!(f, "{}", name.lexeme),
+            &Expr::Assign(ref name, ref value) => write!(f, "{} = {}", name.lexeme, value),
         }
     }
 }

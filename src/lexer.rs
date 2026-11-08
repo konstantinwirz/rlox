@@ -130,7 +130,10 @@ impl<'s> Lexer<'s> {
             }
 
             if self.is_at_end() {
-                return Err(LoxError::new_scan_error("Unterminated string.", self.line));
+                return Err(LoxError::new_scan_error(
+                    "Error: Unterminated string.",
+                    self.line,
+                ));
             }
 
             if self.peek() == Some('\n') {
@@ -160,6 +163,7 @@ impl<'s> Lexer<'s> {
         }
 
         let lexeme = &self.source[self.start..self.current];
+
         let value: f64 = match lexeme.parse::<f64>() {
             Ok(v) => v,
             Err(_) => Err(LoxError::new_scan_error(
@@ -223,7 +227,7 @@ impl<'s> Lexer<'s> {
     }
 
     fn peek_next(&self) -> Option<char> {
-        self.rest.chars().nth(2)
+        self.rest.chars().nth(1)
     }
 
     fn matches(&mut self, c: char) -> bool {

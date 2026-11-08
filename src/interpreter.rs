@@ -1,41 +1,94 @@
-use crate::{Expr, LoxError, LoxValue, Parser, Token, TokenKind};
-use std::{borrow::Cow, iter::Peekable};
+use crate::{
+    Env, Expr, LoxError, LoxValue, Stmt, Token, TokenKind, loxerror::SourceLocation,
+    parser::ParseResult,
+};
+use std::borrow::Cow;
 
-pub struct Interpreter<'i> {
-    parser: Peekable<Parser<'i>>,
+pub struct Interpreter<'i, P>
+where
+    P: Iterator<Item = ParseResult<'i>>,
+{
+    parser: P,
+    env: Env<'i>,
 }
 
-impl<'i> Interpreter<'i> {
-    pub fn new(source: &'i str) -> Self {
+impl<'i, P> Interpreter<'i, P>
+where
+    P: Iterator<Item = ParseResult<'i>>,
+{
+    pub fn new(parser: P) -> Self {
         Self {
-            parser: Parser::new(source).peekable(),
+            parser,
+            env: Env::default(),
         }
     }
 
-    pub fn eval(&mut self) -> Result<LoxValue<'i>, LoxError> {
-        match self.parser.next().expect("expect at least an expression") {
-            Ok(expr) => self.eval_expr(&expr),
-            Err(_) => todo!(),
+    pub fn run(&mut self) -> Result<(), LoxError> {
+        while let Some(parse_result) = self.parser.next() {
+            match parse_result? {
+                Some(stmt) => self.exec(stmt)?,
+                None => return Ok(()),
+            }
+        }
+
+        Ok(())
+    }
+
+    fn exec(&mut self, stmt: Stmt<'i>) -> Result<(), LoxError> {
+        match stmt {
+            Stmt::Print(expr) => Ok(Self::print_lox_value(&self.eval_expr(&expr)?)),
+            Stmt::Expr(expr) => self.eval_expr(&expr).map(|_| ()), // side effect
+            Stmt::Var { name, initializer } => {
+                let value: LoxValue<'_> = match initializer {
+                    Some(init) => self.eval_expr(&init)?,
+                    None => LoxValue::Nil,
+                };
+                Ok(self.env.define(name.lexeme, value))
+            }
+            Stmt::Block(stmts) => self.exec_block(stmts, Env::with_enclosing(self.env.clone())),
         }
     }
 
-    pub fn print(value: &LoxValue<'_>) {
-        let s: &str = match value {
-            LoxValue::Nil => "nil",
-            LoxValue::String(s) => s,
-            LoxValue::Number(n) => &format!("{n}"),
-            LoxValue::Boolean(b) => &format!("{b}"),
+    fn exec_block(&mut self, stmts: Vec<Stmt<'i>>, mut env: Env<'i>) -> Result<(), LoxError> {
+        std::mem::swap(&mut self.env, &mut env);
+
+        for stmt in stmts {
+            self.exec(stmt)?;
+        }
+
+        // swap back
+        std::mem::swap(&mut env, &mut self.env);
+
+        Ok(())
+    }
+
+    fn print_lox_value(value: &LoxValue<'_>) {
+        match value {
+            LoxValue::Nil => println!("nil"),
+            LoxValue::Number(n) => {
+                let s = format!("{n}");
+                if s.ends_with(".0") {
+                    println!("{}", &s[..s.len() - 2]);
+                } else {
+                    println!("{}", s);
+                }
+            }
+            _ => println!("{value}"),
         };
-
-        println!("{}", s);
     }
 
     fn eval_expr(&mut self, expr: &Expr<'i>) -> Result<LoxValue<'i>, LoxError> {
         match expr {
-            &Expr::Binary(ref left, ref op, ref right) => self.eval_binary_expr(left, op, right),
-            &Expr::Unary(ref op, ref expr) => self.eval_unary_expr(op, expr),
             &Expr::Literal(ref value) => Ok(value.clone()), // clone is cheap
             &Expr::Group(ref expr) => self.eval_expr(expr),
+            &Expr::Unary(ref op, ref expr) => self.eval_unary_expr(op, expr),
+            &Expr::Binary(ref left, ref op, ref right) => self.eval_binary_expr(left, op, right),
+            &Expr::Var(ref name) => self.env.get_value(name).map(|v| v.clone()),
+            &Expr::Assign(ref name, ref value_expr) => {
+                let value = self.eval_expr(value_expr)?;
+                _ = self.env.assign(name, value.clone())?;
+                Ok(value)
+            }
         }
     }
 
@@ -47,9 +100,20 @@ impl<'i> Interpreter<'i> {
         let value = self.eval_expr(expr)?;
 
         match &op.kind {
-            &TokenKind::Minus => Ok(LoxValue::Number(-value.expect_number()?)),
+            &TokenKind::Minus => Ok(LoxValue::Number(-value.expect_number(op.line).map_err(
+                |_| {
+                    // we have to re-map the error message
+                    LoxError::new_runtime_error(
+                        "Operand must be a number.",
+                        SourceLocation::Line(op.line),
+                    )
+                },
+            )?)),
             &TokenKind::Bang => Ok(LoxValue::Boolean(!value.is_truthy())),
-            _ => Err(LoxError::new_runtime_error("invalid unary expression")),
+            _ => Err(LoxError::new_runtime_error(
+                "invalid unary expression",
+                SourceLocation::Token(&op),
+            )),
         }
     }
 
@@ -64,7 +128,7 @@ impl<'i> Interpreter<'i> {
 
         match &op.kind {
             &TokenKind::Minus => Ok(LoxValue::Number(
-                left_value.expect_number()? - right_value.expect_number()?,
+                left_value.expect_number(op.line)? - right_value.expect_number(op.line)?,
             )),
             &TokenKind::Plus => match (&left_value, &right_value) {
                 (&LoxValue::Number(ref l), &LoxValue::Number(ref r)) => Ok(LoxValue::Number(l + r)),
@@ -73,25 +137,26 @@ impl<'i> Interpreter<'i> {
                 }
                 _ => Err(LoxError::new_runtime_error(
                     "Operands must be two numbers or two strings.",
+                    SourceLocation::Line(op.line),
                 )),
             },
             &TokenKind::Slash => Ok(LoxValue::Number(
-                left_value.expect_number()? / right_value.expect_number()?,
+                left_value.expect_number(op.line)? / right_value.expect_number(op.line)?,
             )),
             &TokenKind::Star => Ok(LoxValue::Number(
-                left_value.expect_number()? * right_value.expect_number()?,
+                left_value.expect_number(op.line)? * right_value.expect_number(op.line)?,
             )),
             &TokenKind::Greater => Ok(LoxValue::Boolean(
-                left_value.expect_number()? > right_value.expect_number()?,
+                left_value.expect_number(op.line)? > right_value.expect_number(op.line)?,
             )),
             &TokenKind::GreaterEqual => Ok(LoxValue::Boolean(
-                left_value.expect_number()? >= right_value.expect_number()?,
+                left_value.expect_number(op.line)? >= right_value.expect_number(op.line)?,
             )),
             &TokenKind::Less => Ok(LoxValue::Boolean(
-                left_value.expect_number()? < right_value.expect_number()?,
+                left_value.expect_number(op.line)? < right_value.expect_number(op.line)?,
             )),
             &TokenKind::LessEqual => Ok(LoxValue::Boolean(
-                left_value.expect_number()? <= right_value.expect_number()?,
+                left_value.expect_number(op.line)? <= right_value.expect_number(op.line)?,
             )),
             &TokenKind::EqualEqual => Ok(LoxValue::Boolean(left_value == right_value)),
             &TokenKind::BangEqual => Ok(LoxValue::Boolean(left_value != right_value)),
@@ -101,13 +166,13 @@ impl<'i> Interpreter<'i> {
 }
 
 impl<'a> LoxValue<'a> {
-    fn expect_number(&self) -> Result<f64, LoxError> {
+    fn expect_number(&self, line: usize) -> Result<f64, LoxError> {
         match self {
             &LoxValue::Number(n) => Ok(n),
-            _ => Err(LoxError::new_runtime_error(&format!(
-                "Operand '{}' must be a number.",
-                self,
-            ))),
+            _ => Err(LoxError::new_runtime_error(
+                "Operands must be numbers.",
+                SourceLocation::Line(line),
+            )),
         }
     }
 

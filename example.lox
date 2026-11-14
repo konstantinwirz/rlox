@@ -1,6 +1,9 @@
 var a = 142;
 var b = 69;
 
+print a and b;
+print a or b;
+
 if (a > b) {
   print "then branch";
 } else {

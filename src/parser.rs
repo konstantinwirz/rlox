@@ -100,7 +100,7 @@ impl<'p> Parser<'p> {
     }
 
     fn parse_assignment(&mut self) -> Result<Expr<'p>, LoxError> {
-        let expr = self.parse_equality_expr()?;
+        let expr = self.parse_or_expr()?;
 
         if let Some(equals) = self.matches(&[TokenKind::Equal])? {
             let value = self.parse_assignment()?;
@@ -111,6 +111,28 @@ impl<'p> Parser<'p> {
                     SourceLocation::Token(&equals),
                 )),
             };
+        }
+
+        Ok(expr)
+    }
+
+    fn parse_or_expr(&mut self) -> Result<Expr<'p>, LoxError> {
+        let mut expr = self.parse_and_expr()?;
+
+        while let Some(op) = self.matches(&[TokenKind::Or])? {
+            let right = self.parse_and_expr()?;
+            expr = Expr::Logical(Box::new(expr), op, Box::new(right));
+        }
+
+        Ok(expr)
+    }
+
+    fn parse_and_expr(&mut self) -> Result<Expr<'p>, LoxError> {
+        let mut expr = self.parse_equality_expr()?;
+
+        while let Some(op) = self.matches(&[TokenKind::And])? {
+            let right = self.parse_equality_expr()?;
+            expr = Expr::Logical(Box::new(expr), op, Box::new(right));
         }
 
         Ok(expr)

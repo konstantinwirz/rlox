@@ -109,7 +109,29 @@ where
                 _ = self.env.assign(name, value.clone())?;
                 Ok(value)
             }
+            &Expr::Logical(ref left, ref op, ref right) => self.eval_logical_expr(left, op, right),
         }
+    }
+
+    fn eval_logical_expr(
+        &mut self,
+        left: &Expr<'i>,
+        op: &Token<'_>,
+        right: &Expr<'i>,
+    ) -> Result<LoxValue<'i>, LoxError> {
+        let left_value = self.eval_expr(left)?;
+        if op.kind == TokenKind::Or {
+            if left_value.is_truthy() {
+                return Ok(left_value);
+            }
+        } else {
+            assert_eq!(op.kind, TokenKind::And);
+            if !left_value.is_truthy() {
+                return Ok(left_value);
+            }
+        }
+
+        self.eval_expr(right)
     }
 
     fn eval_unary_expr(

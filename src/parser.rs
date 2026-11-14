@@ -50,6 +50,10 @@ impl<'p> Parser<'p> {
     }
 
     fn parse_stmt(&mut self) -> Result<Stmt<'p>, LoxError> {
+        if self.matches(&[TokenKind::If])?.is_some() {
+            return self.parse_if_stmt();
+        }
+
         if self.matches(&[TokenKind::Print])?.is_some() {
             return self.parse_print_stmt();
         }
@@ -59,6 +63,25 @@ impl<'p> Parser<'p> {
         }
 
         self.parse_expr_stmt()
+    }
+
+    fn parse_if_stmt(&mut self) -> Result<Stmt<'p>, LoxError> {
+        _ = self.consume(&TokenKind::LeftParen, "Expect '(' after 'if'.");
+        let cond = self.parse_expr()?;
+        _ = self.consume(&TokenKind::RightParen, "Expect ')' after if condition.");
+
+        let then_branch = Box::new(self.parse_stmt()?);
+        let else_branch = if self.matches(&[TokenKind::Else])?.is_some() {
+            Some(Box::new(self.parse_stmt()?))
+        } else {
+            None
+        };
+
+        Ok(Stmt::If {
+            cond,
+            then_branch,
+            else_branch,
+        })
     }
 
     fn parse_block(&mut self) -> Result<Stmt<'p>, LoxError> {

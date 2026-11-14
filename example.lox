@@ -1,0 +1,9 @@
+var a = 142;
+var b = 69;
+
+if (a > b) {
+  print "then branch";
+} else {
+  print "else branch";
+}
+

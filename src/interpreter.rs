@@ -46,6 +46,11 @@ where
                 Ok(self.env.define(name.lexeme, value))
             }
             Stmt::Block(stmts) => self.exec_block(stmts, Env::with_enclosing(self.env.clone())),
+            Stmt::If {
+                cond,
+                then_branch,
+                else_branch,
+            } => self.exec_if_stmt(cond, *then_branch, else_branch.map(|b| *b)),
         }
     }
 
@@ -58,6 +63,21 @@ where
 
         // swap back
         std::mem::swap(&mut env, &mut self.env);
+
+        Ok(())
+    }
+
+    fn exec_if_stmt(
+        &mut self,
+        cond: Expr<'i>,
+        then_branch: Stmt<'i>,
+        else_branch: Option<Stmt<'i>>,
+    ) -> Result<(), LoxError> {
+        if self.eval_expr(&cond)?.is_truthy() {
+            return self.exec(then_branch);
+        } else if let Some(stmt) = else_branch {
+            return self.exec(stmt);
+        }
 
         Ok(())
     }

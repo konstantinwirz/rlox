@@ -25,15 +25,18 @@ impl<'env> Env<'env> {
     }
 
     pub fn assign(&mut self, name: &Token<'_>, value: LoxValue<'env>) -> Result<(), LoxError> {
-        if !self.values.contains_key(name.lexeme) {
-            return Err(LoxError::new_runtime_error(
-                &format!("Undefined variable '{}'.", name.lexeme),
-                SourceLocation::Line(name.line),
-            ));
+        if self.values.contains_key(name.lexeme) {
+            self.values.insert(name.lexeme.to_string(), value);
+            return Ok(());
         }
 
-        self.values.insert(name.lexeme.to_string(), value);
-        Ok(())
+        match &mut self.enclosing {
+            Some(enclosing) => enclosing.assign(name, value),
+            None => Err(LoxError::new_runtime_error(
+                &format!("Undefined variable '{}'.", name.lexeme),
+                SourceLocation::Line(name.line),
+            )),
+        }
     }
 
     pub fn get_value(&self, name: &Token<'_>) -> Result<&LoxValue<'env>, LoxError> {

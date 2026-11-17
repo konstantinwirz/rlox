@@ -16,6 +16,10 @@ pub enum Stmt<'a> {
         initializer: Option<Expr<'a>>,
     },
     Block(Vec<Stmt<'a>>),
+    While {
+        cond: Expr<'a>,
+        body: Box<Stmt<'a>>,
+    },
 }
 
 impl<'a> Display for Stmt<'a> {
@@ -41,17 +45,20 @@ impl<'a> Display for Stmt<'a> {
                 ref name,
                 ref initializer,
             } => match initializer {
-                Some(expr) => write!(f, "var {}={expr}", name.lexeme),
+                Some(expr) => write!(f, "var {} = {expr}", name.lexeme),
                 None => write!(f, "var {name}"),
             },
             &Stmt::Block(ref stmts) => {
                 let mut output = String::new();
                 output.push_str("{");
                 for stmt in stmts {
-                    output.push_str(&format!("\n{stmt}"));
+                    output.push_str(&format!("\n\t{stmt}"));
                 }
                 output.push_str("\n}");
                 f.write_str(&output)
+            }
+            &Self::While { ref cond, ref body } => {
+                write!(f, "while {}\n{}", cond, body)
             }
         }
     }

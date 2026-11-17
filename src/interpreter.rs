@@ -26,7 +26,7 @@ where
     pub fn run(&mut self) -> Result<(), LoxError> {
         while let Some(parse_result) = self.parser.next() {
             match parse_result? {
-                Some(stmt) => self.exec(stmt)?,
+                Some(stmt) => self.exec(&stmt)?,
                 None => return Ok(()),
             }
         }
@@ -34,7 +34,7 @@ where
         Ok(())
     }
 
-    fn exec(&mut self, stmt: Stmt<'i>) -> Result<(), LoxError> {
+    fn exec(&mut self, stmt: &Stmt<'i>) -> Result<(), LoxError> {
         match stmt {
             Stmt::Print(expr) => Ok(Self::print_lox_value(&self.eval_expr(&expr)?)),
             Stmt::Expr(expr) => self.eval_expr(&expr).map(|_| ()), // side effect
@@ -46,15 +46,24 @@ where
                 Ok(self.env.define(name.lexeme, value))
             }
             Stmt::Block(stmts) => self.exec_block(stmts, Env::with_enclosing(self.env.clone())),
-            Stmt::If {
-                cond,
-                then_branch,
-                else_branch,
-            } => self.exec_if_stmt(cond, *then_branch, else_branch.map(|b| *b)),
+            &Stmt::If {
+                ref cond,
+                ref then_branch,
+                ref else_branch,
+            } => self.exec_if_stmt(cond, then_branch, else_branch.as_ref().map(|b| b.as_ref())),
+            Stmt::While { cond, body } => self.exec_while_loop(cond, body),
         }
     }
 
-    fn exec_block(&mut self, stmts: Vec<Stmt<'i>>, mut env: Env<'i>) -> Result<(), LoxError> {
+    fn exec_while_loop(&mut self, cond: &Expr<'i>, body: &Stmt<'i>) -> Result<(), LoxError> {
+        while self.eval_expr(&cond)?.is_truthy() {
+            self.exec(body)?;
+        }
+
+        Ok(())
+    }
+
+    fn exec_block(&mut self, stmts: &[Stmt<'i>], mut env: Env<'i>) -> Result<(), LoxError> {
         std::mem::swap(&mut self.env, &mut env);
 
         for stmt in stmts {
@@ -69,9 +78,9 @@ where
 
     fn exec_if_stmt(
         &mut self,
-        cond: Expr<'i>,
-        then_branch: Stmt<'i>,
-        else_branch: Option<Stmt<'i>>,
+        cond: &Expr<'i>,
+        then_branch: &Stmt<'i>,
+        else_branch: Option<&Stmt<'i>>,
     ) -> Result<(), LoxError> {
         if self.eval_expr(&cond)?.is_truthy() {
             return self.exec(then_branch);

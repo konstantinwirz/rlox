@@ -58,6 +58,10 @@ impl<'p> Parser<'p> {
             return self.parse_print_stmt();
         }
 
+        if self.matches(&[TokenKind::While])?.is_some() {
+            return self.parse_while_stmt();
+        }
+
         if self.matches(&[TokenKind::LeftBrace])?.is_some() {
             return self.parse_block();
         }
@@ -82,6 +86,14 @@ impl<'p> Parser<'p> {
             then_branch,
             else_branch,
         })
+    }
+
+    fn parse_while_stmt(&mut self) -> Result<Stmt<'p>, LoxError> {
+        _ = self.consume(&TokenKind::LeftParen, "Expect '(' after 'while'.")?;
+        let cond = self.parse_expr()?;
+        _ = self.consume(&TokenKind::RightParen, "Expect ')' after condition.")?;
+        let body = Box::new(self.parse_stmt()?);
+        Ok(Stmt::While { cond, body })
     }
 
     fn parse_block(&mut self) -> Result<Stmt<'p>, LoxError> {
